@@ -108,7 +108,7 @@ def run_to_steady(theta0, dt, alpha, h, gamma, q, bc="dirichlet",
 # ---------------- steady state: sparse system and own CG ----------------
 def assemble(n, h, alpha, gamma_int):
     """A = alpha * (-Laplacian_h) + diag(gamma) on the n x n interior nodes (Dirichlet walls)."""
-    T1 = sp.diags([-1, 2, -1], [-1, 0, 1], shape=(n, n))
+    T1 = sp.diags([-1.0, 2.0, -1.0], [-1, 0, 1], shape=(n, n))
     I = sp.identity(n)
     Lap = (sp.kron(I, T1) + sp.kron(T1, I)) / h**2
     return (alpha * Lap + sp.diags(gamma_int.ravel())).tocsr()

@@ -1,0 +1,6 @@
+r,dt_s,4r+g*dt/2,4r+g*dt,abs(1-8r),abs_G_exact_discrete,abs_G_measured,region
+0.2,0.16,0.8096,0.8192,0.6,0.61762,0.61762,below both limits
+0.24559,0.19647,0.99414,1.00593,0.9647,0.98634,0.98634,between sharp and conservative
+0.25,0.2,1.012,1.024,1.0,1.02203,1.02203,ABOVE sharp limit (unstable)
+0.3,0.24,1.2144,1.2288,1.4,1.42643,1.42643,ABOVE sharp limit (unstable)
+0.35,0.28,1.4168,1.4336,1.8,1.83084,1.83084,ABOVE sharp limit (unstable)
