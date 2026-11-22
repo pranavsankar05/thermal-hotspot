@@ -21,4 +21,4 @@ python experiments2.py check     # verify implicit schemes against CG
 - [x] Phase 1: solver core + validation V1, V4, V6
 - [x] Phase 2: sparse assembly, own CG, V3, V5
 - [x] Phase 3: experiments 1-5, BE/CN
-- [ ] Phase 4: Streamlit app
+- [x] Phase 4: Streamlit app
