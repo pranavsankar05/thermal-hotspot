@@ -1,0 +1,5 @@
+design,source_assumption,ell_m,s_kappa_over_alpha,rmse_C,max_error_C,loo_rmse_C,baseline_rmse_C
+previous,all racks at each height,0.38,0.019924682732301593,3.055,5.675,3.497,3.662
+previous,rack 3 only,1.0,0.009285373502602879,3.372,6.295,3.707,3.662
+retrofitted,all racks at each height,0.4612,0.014931189117534103,2.838,4.966,3.233,3.365
+retrofitted,rack 3 only,1.0,0.009807743074644312,3.11,5.56,3.427,3.365
