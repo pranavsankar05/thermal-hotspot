@@ -1,0 +1,14 @@
+test,case,value_1,value_2,value_3
+cross_design,fit previous -> predict retrofitted,1.934,0.606,3.365
+cross_design,fit retrofitted -> predict previous,2.085,0.606,3.662
+alignment,dU = -2.0,3.409,2.644
+alignment,dU = -1.5,3.335,2.93
+alignment,dU = -1.0,3.178,2.791
+alignment,dU = -0.5,2.506,2.545
+alignment,dU = 0.0,2.14,1.974
+alignment,dU = 0.5,2.142,2.058
+alignment,dU = 1.0,1.82,1.835
+alignment,dU = 1.5,1.878,1.803
+alignment,dU = 2.0,2.191,2.062
+bootstrap,previous,6.31e-06,0.00015849,0.00015849
+bootstrap,retrofitted,2.512e-05,0.00025119,0.03981072

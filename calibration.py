@@ -9,14 +9,21 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from solver import ALPHA, cg
+from solver import cg
 
 os.makedirs("results", exist_ok=True)
 
 DATA = "data/data"                 # folder created by unpacking data.tar.xz
 H_ROOM = 2.0                       # modelled column height [m]
-M = 200                            # cells along the column (h = 0.01 m)
-Z_U20, DZ_U = 0.979, 0.04445       # height of 20U [m] and height per U [m] (from exhaust_temp.csv)
+M = 200                            # cells along the column
+Z_U20, DZ_U = 0.979, 0.04445       # height of 20U [m] and height per U [m]
+RHO_CP = 1206.0                    # volumetric heat capacity of air [J/(m^3 K)]
+A_RACK = 0.6                       # assumed rack cross-section [m^2]; it cancels in q/gamma
+GBG = 0.01                         # cooling between servers [1/s]; the data cannot determine it
+OFFS = np.linspace(-DZ_U / 2, DZ_U / 2, 9)
+ELLS = np.logspace(-2, 0, 120)     # model A: decay length scan [m]
+KAPPAS = np.logspace(-6, -1, 26)   # models B, C: mixing diffusivity [m^2/s]
+VS = np.array([0.0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.4])   # model C: upward air speed [m/s]
 
 DESIGNS = {
     "previous":    ("previousDesign",
@@ -26,12 +33,15 @@ DESIGNS = {
                     "netbotz_sensor_values_door_closed_temperature.txt",
                     "inrow_cooler_sensor_door_closed.txt"),
 }
-PAPER_CFD_ERR = {"previous": (0.56, 1.1), "retrofitted": (0.47, 1.6)}   # (mean, max) [C], Kuzay et al. 2022
+PAPER_CFD_ERR = {"previous": (0.56, 1.1), "retrofitted": (0.47, 1.6)}   # (mean, max) [C]
 
-# Table 1 of Kuzay et al. (2022): (rack, first row [U], height [U], power [W])
-SERVERS = [(1, 38, 1, 84), (2, 27, 2, 144), (2, 29, 2, 144), (3, 25, 2, 154), (3, 27, 2, 322),
-           (3, 29, 2, 196), (3, 31, 2, 112), (3, 35, 2, 210), (4, 34, 2, 468), (4, 38, 2, 165)]
-MODES = {"all racks at each height": "all", "rack 3 only": "rack3"}
+# Table 1 of Kuzay et al. (2022): (rack, first row [U], height [U], power [W], air flow [m^3/s])
+SERVERS = [(1, 38, 1, 84, 0.00740), (2, 27, 2, 144, 0.02390), (2, 29, 2, 144, 0.02390),
+           (3, 25, 2, 154, 0.03300), (3, 27, 2, 322, 0.06700), (3, 29, 2, 196, 0.04060),
+           (3, 31, 2, 112, 0.03300), (3, 35, 2, 210, 0.01900), (4, 34, 2, 468, 0.04450),
+           (4, 38, 2, 165, 0.01400)]
+SOURCES = {"all racks": "all", "rack 3 only": "rack3"}
+MODELS = ["A diffusion only", "E energy balance only", "B flow-based", "C flow-based + upward air"]
 
 
 def zU(u):
@@ -40,7 +50,6 @@ def zU(u):
 
 # ------------------------------------------------------------------ data loading
 def _records(path):
-    """Yield (timestamp, list of single-key dicts) from the logger text files."""
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -68,8 +77,7 @@ def load_netbotz(path):
     us = np.array(sorted(series))
     mean = np.array([np.mean(series[u]) for u in us])
     std = np.array([np.std(series[u]) for u in us])
-    n = int(np.median([len(series[u]) for u in us]))
-    return us, mean, std, n
+    return us, mean, std, int(np.median([len(series[u]) for u in us]))
 
 
 def load_cooler(path):
@@ -88,22 +96,23 @@ def pick(d, part):
     raise KeyError(part)
 
 
-def load_cfd(folder):
-    """Published CFD profile (temperature, height) or None."""
+def crosscheck(us, Tm):
     try:
-        arr = np.genfromtxt(f"{DATA}/Plots/{folder}/data.csv", delimiter=",", skip_header=1)[:, :2]
-        arr = arr[np.isfinite(arr).all(axis=1)]
-        return arr[:, 0], arr[:, 1]
+        arr = np.genfromtxt(f"{DATA}/Plots/previousDesign/exhaust_temp.csv", delimiter=",", skip_header=1)
+        d = {int(a[0]): (a[2], a[3]) for a in arr}
+        for col, name in enumerate(["'Previous Design (C)'", "'Retrofitted Design (C)'"]):
+            diff = [d[u][col] - t for u, t in zip(us, Tm) if u in d]
+            print(f"   my average vs exhaust_temp.csv column {name}: RMS difference = "
+                  f"{np.sqrt(np.mean(np.square(diff))):.2f} C")
     except Exception as e:
-        print(f"  (CFD overlay skipped: {e})")
-        return None
+        print(f"   (exhaust_temp.csv cross-check skipped: {e})")
 
 
-# ------------------------------------------------------------------ model
+# ------------------------------------------------------------------ source terms
 def source_density(mode, z):
-    """Heat input per metre of height [W/m] from the real server powers."""
+    """Heat input per metre of height [W/m] from the real server powers (model A)."""
     P = np.zeros_like(z)
-    for rack, first, hgt, watts in SERVERS:
+    for rack, first, hgt, watts, flow in SERVERS:
         if mode == "rack3" and rack != 3:
             continue
         z0, z1 = float(zU(first)), float(zU(first + hgt))
@@ -111,10 +120,26 @@ def source_density(mode, z):
     return P
 
 
-def solve_profile(ell, P, z):
-    """Steady 1D model  -theta'' + theta/ell^2 = P  (alpha scaled to 1), theta(0) = 0 at the floor,
-    zero flux at the top (insulated ceiling). Symmetric half-cell form at the top, so A is SPD
-    and the project's own CG applies."""
+def fields(mode, z):
+    """q(z) [K/s] and gamma(z) [1/s] from server power and air flow; occ = cells inside a server."""
+    q, g = np.zeros_like(z), np.zeros_like(z)
+    occ = np.zeros(z.shape, dtype=bool)
+    for rack, first, hgt, watts, flow in SERVERS:
+        if mode == "rack3" and rack != 3:
+            continue
+        z0, z1 = float(zU(first)), float(zU(first + hgt))
+        vol = A_RACK * (z1 - z0)
+        m = (z >= z0) & (z < z1)
+        q[m] += watts / (RHO_CP * vol)
+        g[m] += flow / vol
+        occ |= m
+    return q, g, occ
+
+
+# ------------------------------------------------------------------ models
+def solve_diffusion(ell, P, z):
+    """Model A: -theta'' + theta/ell^2 = P with theta = 0 at the floor, zero flux at the ceiling.
+    Symmetric half-cell form at the top, so A is SPD and the project's own CG applies."""
     h = z[1] - z[0]
     gam = 1.0 / ell**2
     main = np.full(M, 2.0 / h**2 + gam)
@@ -127,43 +152,87 @@ def solve_profile(ell, P, z):
     return np.concatenate([[0.0], th])
 
 
-def build_phi(P, ells, zs, z):
-    Phi = np.empty((len(ells), len(zs)))
-    for k, ell in enumerate(ells):
-        Phi[k] = np.interp(zs, z, solve_profile(ell, P, z))
-    return Phi
+def thomas(a, b, c, d):
+    """Own tridiagonal solver. a: lower, b: main, c: upper (a[0] and c[-1] unused)."""
+    n = len(d)
+    cp, dp = np.zeros(n), np.zeros(n)
+    cp[0], dp[0] = c[0] / b[0], d[0] / b[0]
+    for i in range(1, n):
+        m = b[i] - a[i] * cp[i - 1]
+        cp[i] = c[i] / m
+        dp[i] = (d[i] - a[i] * dp[i - 1]) / m
+    x = np.zeros(n)
+    x[-1] = dp[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = dp[i] - cp[i] * x[i + 1]
+    return x
 
 
-def fit(Phi, r, mask):
-    """theta = s * phi(ell) is linear in s, so for each ell the best s is closed form."""
+def solve_adv(kappa, v, q, g, occ, z):
+    """Models B (v = 0) and C: -kappa theta'' + v theta' + gamma(z) theta = q(z).
+    theta = 0 at the floor, zero gradient at the ceiling, first-order upwind for v >= 0."""
+    h = z[1] - z[0]
+    gam = np.where(occ, g, GBG)[1:]
+    a = np.full(M, -kappa / h**2 - v / h)
+    b = 2 * kappa / h**2 + v / h + gam
+    c = np.full(M, -kappa / h**2)
+    a[0] = 0.0
+    a[-1] = -2 * kappa / h**2 - v / h            # ghost node above the ceiling
+    c[-1] = 0.0
+    return np.concatenate([[0.0], thomas(a, b, c, q[1:].copy())])
+
+
+# ------------------------------------------------------------------ fitting
+def at_sensors(prof, z, zs):
+    return np.array([np.interp(zz + OFFS, z, prof).mean() for zz in zs])
+
+
+def sensor_matrix(profiles, z, zs):
+    return np.array([at_sensors(p, z, zs) for p in profiles])
+
+
+def best_row(Phi, r, mask, scale):
     sub, rr = Phi[:, mask], r[mask]
-    s = np.maximum((sub @ rr) / (np.sum(sub * sub, axis=1) + 1e-300), 0.0)
+    if scale:                                     # model A: amplitude s is linear, closed form
+        s = np.maximum((sub @ rr) / (np.sum(sub * sub, axis=1) + 1e-300), 0.0)
+    else:
+        s = np.ones(len(Phi))
     cost = np.sum((rr[None, :] - s[:, None] * sub) ** 2, axis=1)
     k = int(np.argmin(cost))
-    return k, float(s[k]), cost
+    return k, float(s[k])
+
+
+def fit_model(Phi, r, scale):
+    """Best row, in-sample errors and leave-one-out RMSE (each held-out sensor is predicted from a refit)."""
+    n = len(r)
+    k, s = best_row(Phi, r, np.ones(n, dtype=bool), scale)
+    err = s * Phi[k] - r
+    loo = []
+    for j in range(n):
+        mask = np.arange(n) != j
+        kj, sj = best_row(Phi, r, mask, scale)
+        loo.append(sj * Phi[kj, j] - r[j])
+    return {"k": k, "s": s, "pred": s * Phi[k],
+            "rmse": float(np.sqrt(np.mean(err**2))), "max": float(np.abs(err).max()),
+            "loo": float(np.sqrt(np.mean(np.square(loo))))}
 
 
 # ------------------------------------------------------------------ main
-def crosscheck(us, Tm):
-    try:
-        arr = np.genfromtxt(f"{DATA}/Plots/previousDesign/exhaust_temp.csv", delimiter=",", skip_header=1)
-        d = {int(a[0]): (a[2], a[3]) for a in arr}
-        for col, name in enumerate(["column 'Previous Design (C)'", "column 'Retrofitted Design (C)'"]):
-            diff = [d[u][col] - t for u, t in zip(us, Tm) if u in d]
-            print(f"   my average vs exhaust_temp.csv {name}: RMS difference = {np.sqrt(np.mean(np.square(diff))):.3f} C")
-    except Exception as e:
-        print(f"   (exhaust_temp.csv cross-check skipped: {e})")
-
-
 def main():
     z = np.linspace(0.0, H_ROOM, M + 1)
     h = z[1] - z[0]
-    ells = np.logspace(-2, 0, 120)                           # decay length scan: 1 cm to 1 m
-    Pm = {name: source_density(m, z) for name, m in MODES.items()}
-    print("Source check (sum of P*h should be close to the listed power):")
-    for name, P in Pm.items():
-        print(f"   {name}: {P.sum() * h:.0f} W")
-    print(f"   total listed power = {sum(s[3] for s in SERVERS)} W  (paper: 2 kW scenario)\n")
+    combos = [(k, v) for k in KAPPAS for v in VS]            # combos[0] = (smallest kappa, v = 0)
+    v0 = np.array([i for i, (k, v) in enumerate(combos) if v == 0.0])
+
+    print("Source check (sum of P*h; listed total = %d W):" % sum(s[3] for s in SERVERS))
+    prof = {}
+    for sname, mode in SOURCES.items():
+        P = source_density(mode, z)
+        q, g, occ = fields(mode, z)
+        print(f"   {sname}: {P.sum() * h:.0f} W")
+        prof[sname] = {"A": np.array([solve_diffusion(e, P, z) for e in ELLS]),
+                       "C": np.array([solve_adv(k, v, q, g, occ, z) for k, v in combos])}
+    print()
 
     summary = []
     for design, (folder, nb_file, cool_file) in DESIGNS.items():
@@ -171,80 +240,93 @@ def main():
         us, Tm, Ts, n = load_netbotz(f"{DATA}/{folder}/{nb_file}")
         cool = load_cooler(f"{DATA}/{folder}/{cool_file}")
         T_ref = pick(cool, "MinRackInletTempMetric")
-        print(f"   {len(us)} sensors, {n} samples each (10 s apart).  largest std over time = {Ts.max():.2f} C")
-        print(f"   cooler: supply {pick(cool, 'SupplyAirTempMetric'):.1f} C, return {pick(cool, 'ReturnAirTempMetric'):.1f} C, "
-              f"min rack inlet {T_ref:.1f} C (used as reference)")
-        crosscheck(us, Tm)
         zs, r = zU(us), Tm - T_ref
         base = float(np.sqrt(np.mean((r - r.mean()) ** 2)))
-        cfd = load_cfd(folder)
+        print(f"   {len(us)} sensors, {n} samples each; largest std over time = {Ts.max():.2f} C")
+        print(f"   reference (min rack inlet) = {T_ref:.1f} C; baseline RMSE (predict the mean) = {base:.2f} C")
+        crosscheck(us, Tm)
+        print(f"   {'source set':12s} {'model':26s} {'fit':>3s} {'parameters':34s} {'RMSE':>6s} "
+              f"{'max err':>8s} {'LOO RMSE':>9s}")
 
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5.2))
-        axes[0].errorbar(Tm, zs, xerr=Ts, fmt="ks", capsize=2, label="measured (mean ± std, 2 h)")
-        if cfd is not None:
-            axes[0].plot(cfd[0], cfd[1], "r-", lw=1.5, label="published CFD (Kuzay et al.)")
-        sensor_rows = {u: [u, round(float(zu), 4), round(t, 3), round(s, 3)] for u, zu, t, s in zip(us, zs, Tm, Ts)}
-        header = ["U", "z_m", "measured_mean_C", "measured_std_C"]
+        rows = {int(u): [int(u), round(float(zu), 4), round(float(t), 3), round(float(s_), 3)]
+                for u, zu, t, s_ in zip(us, zs, Tm, Ts)}
+        header = ["U", "z_m", "measured_C", "measured_std_C"]
+        fig, (ax, bx) = plt.subplots(1, 2, figsize=(13, 5.4))
+        ax.errorbar(Tm, zs, xerr=Ts, fmt="ks", capsize=2, label="measured (mean ± std, 2 h)")
 
-        print(f"   {'source assumption':26s} {'ell [m]':>8s} {'s=k/a':>9s} {'RMSE':>6s} {'max err':>8s} "
-              f"{'LOO RMSE':>9s} {'baseline':>9s}   gamma=alpha/ell^2   kappa=s*alpha")
-        for (name, mode), colour in zip(MODES.items(), ["tab:blue", "tab:green"]):
-            P = Pm[name]
-            Phi = build_phi(P, ells, zs, z)
-            k, s, cost = fit(Phi, r, np.ones(len(r), dtype=bool))
-            pred = s * Phi[k]
-            err = pred - r
-            loo = []
-            for j in range(len(r)):
-                mask = np.ones(len(r), dtype=bool)
-                mask[j] = False
-                kj, sj, _ = fit(Phi, r, mask)
-                loo.append(sj * Phi[kj, j] - r[j])
-            rmse, mx, rmse_loo = (float(np.sqrt(np.mean(err**2))), float(np.abs(err).max()),
-                                  float(np.sqrt(np.mean(np.square(loo)))))
-            print(f"   {name:26s} {ells[k]:8.3f} {s:9.3e} {rmse:6.2f} {mx:8.2f} {rmse_loo:9.2f} {base:9.2f}   "
-                  f"{ALPHA / ells[k]**2:12.3g}   {s * ALPHA:11.3g}")
-            if k in (0, len(ells) - 1):
-                print("   WARNING: best ell is at the edge of the scan; the fit is not well determined.")
-            curve = T_ref + s * solve_profile(ells[k], P, z)
-            axes[0].plot(curve, z, color=colour, lw=2, label=f"model: {name} (ell = {ells[k]:.2f} m)")
-            axes[1].semilogx(ells, cost, color=colour, label=name)
-            axes[1].plot(ells[k], cost[k], "o", color=colour)
-            for u, p, e in zip(us, T_ref + pred, err):
-                sensor_rows[u] += [round(float(p), 3), round(float(e), 3)]
-            header += [f"model_C [{name}]", f"error_C [{name}]"]
-            summary.append([design, name, round(float(ells[k]), 4), s, round(rmse, 3), round(mx, 3),
-                            round(rmse_loo, 3), round(base, 3)])
-        pm, px = PAPER_CFD_ERR[design]
-        print(f"   baseline = RMSE of predicting the mean temperature. Paper's CFD errors: mean {pm}, max {px} C.\n")
+        for sname in SOURCES:
+            PA, PC = prof[sname]["A"], prof[sname]["C"]
+            Phi_A = sensor_matrix(PA, z, zs)
+            Phi_C = sensor_matrix(PC, z, zs)
+            fA = fit_model(Phi_A, r, True)
+            fB = fit_model(Phi_C[v0], r, False)
+            fC = fit_model(Phi_C, r, False)
+            eE = Phi_C[0] - r
+            kB = combos[v0[fB["k"]]][0]
+            kC, vC = combos[fC["k"]]
+            res = [
+                (MODELS[0], 2, f"ell = {ELLS[fA['k']]:.2f} m, s = {fA['s']:.2e}", T_ref + fA["pred"],
+                 fA["rmse"], fA["max"], fA["loo"], T_ref + fA["s"] * PA[fA["k"]]),
+                (MODELS[1], 0, "none (power and flow only)", T_ref + Phi_C[0],
+                 float(np.sqrt(np.mean(eE**2))), float(np.abs(eE).max()), float(np.sqrt(np.mean(eE**2))),
+                 T_ref + PC[0]),
+                (MODELS[2], 1, f"kappa = {kB:.2e} m2/s", T_ref + fB["pred"],
+                 fB["rmse"], fB["max"], fB["loo"], T_ref + PC[v0[fB["k"]]]),
+                (MODELS[3], 2, f"kappa = {kC:.2e} m2/s, v = {vC:.3f} m/s", T_ref + fC["pred"],
+                 fC["rmse"], fC["max"], fC["loo"], T_ref + PC[fC["k"]]),
+            ]
+            for name, nfit, params, pred, rmse, mx, loo, curve in res:
+                print(f"   {sname:12s} {name:26s} {nfit:3d} {params:34s} {rmse:6.2f} {mx:8.2f} {loo:9.2f}")
+                summary.append([design, sname, name, nfit, params, round(rmse, 3), round(mx, 3),
+                                round(loo, 3), round(base, 3)])
+                for u, p in zip(us, pred):
+                    rows[int(u)].append(round(float(p), 3))
+                header.append(f"pred_C [{sname}|{name}]")
+            if fA["k"] in (0, len(ELLS) - 1):
+                print("   WARNING: model A: best ell is at the edge of the scan.")
+            if kB in (KAPPAS[0], KAPPAS[-1]):
+                print("   WARNING: model B: best kappa is at the edge of the scan.")
+            if vC == VS[-1] or kC in (KAPPAS[0], KAPPAS[-1]):
+                print("   WARNING: model C: best kappa or v is at the edge of the scan.")
+            if vC == 0.0:
+                print("   NOTE: model C chose v = 0, so the data gave no support for upward air movement.")
 
-        axes[0].set_xlabel("temperature at the rear of the rack [°C]")
-        axes[0].set_ylabel("height [m]")
-        axes[0].set_ylim(0, H_ROOM)
-        axes[0].set_title(f"{design} design: measured vs model")
-        axes[0].legend(fontsize=8, loc="lower right")
-        axes[0].grid(alpha=0.3)
-        axes[1].set_xlabel("decay length ell = sqrt(alpha/gamma) [m]")
-        axes[1].set_ylabel("sum of squared errors [K²]")
-        axes[1].set_title("Fit quality vs ell (best s for each ell)")
-        axes[1].legend(fontsize=8)
-        axes[1].grid(alpha=0.3, which="both")
+            if sname == "all racks":
+                for (name, nfit, params, pred, rmse, mx, loo, curve), sty in zip(
+                        res, ["--", ":", "-", "-"]):
+                    ax.plot(curve, z, sty, lw=2, label=f"{name}")
+                bx.bar([m_.split()[0] for m_ in MODELS], [x[6] for x in res],
+                       color=["gray", "tab:orange", "tab:blue", "tab:green"])
+                bx.axhline(base, color="k", ls="--", lw=1, label="predict the mean (baseline)")
+        print()
+
+        ax.set_xlabel("temperature at the rear of the rack [°C]")
+        ax.set_ylabel("height [m]")
+        ax.set_ylim(0, H_ROOM)
+        ax.set_title(f"{design} design: measured vs the four models")
+        ax.legend(fontsize=7, loc="lower right")
+        ax.grid(alpha=0.3)
+        bx.set_ylabel("leave-one-out RMSE [°C]")
+        bx.set_title("Error on held-out sensors (lower is better)")
+        bx.legend(fontsize=8)
+        bx.grid(alpha=0.3, axis="y")
         fig.tight_layout()
         fig.savefig(f"results/calib_{design}.png", dpi=150)
         plt.close(fig)
-
         with open(f"results/calib_sensors_{design}.csv", "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(header)
-            w.writerows(sensor_rows[u] for u in us)
+            w.writerows(rows[int(u)] for u in us)
 
     with open("results/calib_summary.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["design", "source_assumption", "ell_m", "s_kappa_over_alpha", "rmse_C",
-                    "max_error_C", "loo_rmse_C", "baseline_rmse_C"])
+        w.writerow(["design", "source_set", "model", "n_fitted", "parameters", "rmse_C",
+                    "max_err_C", "loo_rmse_C", "baseline_rmse_C"])
         w.writerows(summary)
-    print("Only kappa/alpha and ell = sqrt(alpha/gamma) are identifiable from a steady profile.")
-    print("gamma and kappa above assume alpha = 0.05 m^2/s and are NOT transferable to the plan-view model.")
+    for d, (pm, px) in PAPER_CFD_ERR.items():
+        print(f"Published CFD errors, {d} design: mean {pm} C, max {px} C.")
+    print("Only the ratio of mixing to cooling is identifiable from a steady profile; fitted values are "
+          "effective 1D numbers and are NOT transferable to the plan-view model.")
     print("Done. Files: results/calib_*.png and results/calib_*.csv")
 
 

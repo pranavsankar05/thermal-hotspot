@@ -53,14 +53,17 @@ constant in time, so a steady vertical profile is compared.
 
 Results (leave-one-out RMSE, all racks as sources):
 
-| Design | Diffusion only | Flow-based (power and air flow per server) | Energy balance only | Baseline (predict mean) |
-|---|---|---|---|---|
-| Previous | 3.50 C | 2.32 C | 2.56 C | 3.66 C |
-| Retrofitted | 3.23 C | 2.21 C | 2.65 C | 3.37 C |
+| Design | Baseline (predict mean) | A diffusion only | E energy balance only | B flow-based + mixing | C B + upward air |
+|---|---|---|---|---|---|
+| Previous | 3.66 C | 3.50 C | 3.08 C | 2.14 C | 2.14 C (v = 0) |
+| Retrofitted | 3.37 C | 3.23 C | 3.12 C | 1.97 C | 1.97 C (v = 0) |
 
-Largest single-sensor errors are 3.8 to 4.0 C, against 0.5 to 1.6 C for the published CFD.
-The fitted vertical mixing (2.5e-4 to 4e-4 m^2/s) cannot be transferred to the plan-view
-model. Cooling between servers is not identifiable from this data.
+Model B (measured power and air flow of each server, plus a fitted mixing of about
+1.6e-4 to 2.5e-4 m^2/s) reduces the held-out error by about 40% compared with diffusion
+alone and about 42% compared with predicting the mean. Fitting an upward air speed gave no
+improvement (the fit chose v = 0). Largest single-sensor errors are 3.6 to 3.8 C, against
+1.1 to 1.6 C for the published CFD. The fitted vertical mixing cannot be transferred to the
+plan-view model. Cooling between servers is not identifiable from this data and is fixed.
 
 ## Run
 

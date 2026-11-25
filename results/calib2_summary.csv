@@ -1,5 +1,0 @@
-design,source_set,kappa_m2_s,gamma_bg_1_s,rmse_C,max_err_C,loo_rmse_C,no_mixing_rmse_C,baseline_rmse_C
-previous,all racks,0.0002511886431509582,0.01,2.162,3.825,2.317,2.562,3.662
-previous,rack 3 only,0.0001,0.001,2.679,5.054,2.679,4.321,3.662
-retrofitted,all racks,0.00039810717055349735,0.003,2.047,3.756,2.207,2.65,3.365
-retrofitted,rack 3 only,0.00015848931924611142,0.001,2.507,4.834,2.512,4.273,3.365

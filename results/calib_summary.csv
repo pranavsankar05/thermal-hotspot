@@ -1,5 +1,17 @@
-design,source_assumption,ell_m,s_kappa_over_alpha,rmse_C,max_error_C,loo_rmse_C,baseline_rmse_C
-previous,all racks at each height,0.38,0.019924682732301593,3.055,5.675,3.497,3.662
-previous,rack 3 only,1.0,0.009285373502602879,3.372,6.295,3.707,3.662
-retrofitted,all racks at each height,0.4612,0.014931189117534103,2.838,4.966,3.233,3.365
-retrofitted,rack 3 only,1.0,0.009807743074644312,3.11,5.56,3.427,3.365
+design,source_set,model,n_fitted,parameters,rmse_C,max_err_C,loo_rmse_C,baseline_rmse_C
+previous,all racks,A diffusion only,2,"ell = 0.38 m, s = 1.99e-02",3.055,5.676,3.495,3.662
+previous,all racks,E energy balance only,0,none (power and flow only),3.081,6.191,3.081,3.662
+previous,all racks,B flow-based,1,kappa = 1.58e-04 m2/s,2.034,3.78,2.14,3.662
+previous,all racks,C flow-based + upward air,2,"kappa = 1.58e-04 m2/s, v = 0.000 m/s",2.034,3.78,2.14,3.662
+previous,rack 3 only,A diffusion only,2,"ell = 1.00 m, s = 9.29e-03",3.371,6.293,3.707,3.662
+previous,rack 3 only,E energy balance only,0,none (power and flow only),5.104,11.027,5.104,3.662
+previous,rack 3 only,B flow-based,1,kappa = 6.31e-04 m2/s,2.377,5.396,2.392,3.662
+previous,rack 3 only,C flow-based + upward air,2,"kappa = 6.31e-04 m2/s, v = 0.000 m/s",2.377,5.396,2.611,3.662
+retrofitted,all racks,A diffusion only,2,"ell = 0.46 m, s = 1.49e-02",2.838,4.966,3.233,3.365
+retrofitted,all racks,E energy balance only,0,none (power and flow only),3.124,6.098,3.124,3.365
+retrofitted,all racks,B flow-based,1,kappa = 2.51e-04 m2/s,1.933,3.568,1.974,3.365
+retrofitted,all racks,C flow-based + upward air,2,"kappa = 2.51e-04 m2/s, v = 0.000 m/s",1.933,3.568,1.974,3.365
+retrofitted,rack 3 only,A diffusion only,2,"ell = 1.00 m, s = 9.81e-03",3.109,5.558,3.426,3.365
+retrofitted,rack 3 only,E energy balance only,0,none (power and flow only),5.037,10.57,5.037,3.365
+retrofitted,rack 3 only,B flow-based,1,kappa = 1.00e-03 m2/s,2.156,4.917,2.201,3.365
+retrofitted,rack 3 only,C flow-based + upward air,2,"kappa = 1.00e-03 m2/s, v = 0.000 m/s",2.156,4.917,2.201,3.365
