@@ -1,0 +1,5 @@
+case,total_workload,peak_C,hot_nodes,rack1,rack2,rack3,rack4,rack5,rack6
+baseline (mixed load),3.2,36.362,9,0.9,0.9,0.5,0.5,0.2,0.2
+"same total, spread evenly",3.2,31.9825,0,0.5333,0.5333,0.5333,0.5333,0.5333,0.5333
+"same total, LP minimum peak",3.2,30.0751,0,0.3832,0.4876,0.7007,0.5138,0.4373,0.6773
+"LP maximum total, no hotspot",5.584,35.0,0,0.757,0.961,1.0,1.0,0.8661,1.0
